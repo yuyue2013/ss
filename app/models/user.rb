@@ -55,9 +55,6 @@ require 'carrierwave/orm/activerecord'
 require 'file_size_validator'
 
 class User < ActiveRecord::Base
-  devise :two_factor_authenticatable,
-         otp_secret_encryption_key: File.read(Rails.root.join('.secret')).chomp
-
   include Sortable
   include Gitlab::ConfigHelper
   include TokenAuthenticatable
@@ -70,6 +67,11 @@ class User < ActiveRecord::Base
   default_value_for :hide_no_ssh_key, false
   default_value_for :hide_no_password, false
   default_value_for :theme_id, gitlab_config.default_theme
+
+  devise :two_factor_authenticatable,
+         otp_secret_encryption_key: File.read(Rails.root.join('.secret')).chomp
+
+  devise :two_factor_backupable
 
   devise :lockable, :async,
          :recoverable, :rememberable, :trackable, :validatable, :omniauthable, :confirmable, :registerable
@@ -612,5 +614,23 @@ class User < ActiveRecord::Base
       reorder(project_id: :desc).
       select(:project_id).
       uniq.map(&:project_id)
+  end
+
+  # Taken from devise-two-factor method
+  # https://github.com/tinfoil/devise-two-factor/blob/596151c91869cb690826778f24d85e38dae3dcc6/lib/devise_two_factor/models/two_factor_backupable.rb#L36-L55
+  def recovery_code?(code)
+    codes = self.otp_backup_codes || []
+
+    codes.each do |backup_code|
+      bcrypt      = ::BCrypt::Password.new(backup_code)
+      hashed_code = ::BCrypt::Engine.hash_secret("#{code}#{self.class.pepper}",
+                                                 bcrypt.salt)
+
+      next unless Devise.secure_compare(hashed_code, backup_code)
+
+      return true
+    end
+
+    false
   end
 end
